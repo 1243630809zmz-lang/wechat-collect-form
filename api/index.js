@@ -31,12 +31,14 @@ async function getAccessToken() {
 
 // 2. 解密消息体
 function decryptMsg(msgSignature, timestamp, nonce, encryptedMsg) {
-  const signature = crypto.createHash('sha1')
-    .sort([TOKEN, timestamp, nonce, encryptedMsg].join(''))
-    .digest('hex');
+  // 验证签名
+  const str = [TOKEN, timestamp, nonce, encryptedMsg].sort().join('');
+  const signature = crypto.createHash('sha1').update(str).digest('hex');
   if (signature !== msgSignature) {
     throw new Error('签名验证失败');
   }
+  
+  // 解密消息
   const decipher = crypto.createDecipheriv(
     'aes-256-cbc',
     Buffer.from(ENCODING_AESKEY + '=', 'base64'),
