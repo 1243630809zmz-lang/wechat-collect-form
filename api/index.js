@@ -1,13 +1,11 @@
 // 企业微信收集表自动创建 - Vercel版
 const axios = require('axios');
-const crypto = require('crypto');
 
 // ==================== 配置区域 START ====================
-const CORP_ID = 'wwf13f93d7d6f34e4e'; // 你的企业ID
-const APP_SECRET = 'xAuCndcmTeex9Ro7wFRrX8hxX8okTAvR8_HVgauetaI'; // 你的Secret
-const APP_AGENTID = '1000004'; // 你的AgentId
-const TOKEN = 'WexinToken2024'; // 你的Token
-const ENCODING_AESKEY = 'uXDMyUUMB4uCov2AeTQT9Scga9HTdjJtCXwBRrf3XKN'; // 你的EncodingAESKey
+const CORP_ID = 'wwf13f93d7d6f34e4e';
+const APP_SECRET = 'xAuCndcmTeex9Ro7wFRrX8hxX8okTAvR8_HVgauetaI';
+const APP_AGENTID = '1000004';
+const TOKEN = 'WexinToken2024';
 // ==================== 配置区域 END ====================
 
 // 全局Token缓存
@@ -29,27 +27,7 @@ async function getAccessToken() {
   throw new Error(`获取Token失败: ${JSON.stringify(response.data)}`);
 }
 
-// 2. 解密消息体
-function decryptMsg(msgSignature, timestamp, nonce, encryptedMsg) {
-  // 验证签名
-  const str = [TOKEN, timestamp, nonce, encryptedMsg].sort().join('');
-  const signature = crypto.createHash('sha1').update(str).digest('hex');
-  if (signature !== msgSignature) {
-    throw new Error('签名验证失败');
-  }
-  
-  // 解密消息
-  const decipher = crypto.createDecipheriv(
-    'aes-256-cbc',
-    Buffer.from(ENCODING_AESKEY + '=', 'base64'),
-    Buffer.from(CORP_ID, 'base64')
-  );
-  let decrypted = decipher.update(encryptedMsg, 'base64', 'utf8');
-  decrypted += decipher.final('utf8');
-  return JSON.parse(decrypted);
-}
-
-// 3. 创建收集表
+// 2. 创建收集表
 async function createCollectForm(chatName, token) {
   const url = `https://qyapi.weixin.qq.com/cgi-bin/wedoc/create_form?access_token=${token}`;
   const body = {
@@ -71,24 +49,20 @@ async function createCollectForm(chatName, token) {
   throw new Error(`创建失败: ${JSON.stringify(response.data)}`);
 }
 
-// 4. 回复用户
-async function sendReply(userId, content, token) {
-  const url = `https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`;
-  await axios.post(url, { touser: userId, msgtype: "text", agentid: APP_AGENTID, text: { content } });
-}
-
-// 5. 发送到群
-async function sendToChat(chatId, content, token) {
-  const url = `https://qyapi.weixin.qq.com/cgi-bin/appchat/send?access_token=${token}`;
-  await axios.post(url, { chatid: chatId, msgtype: "text", text: { content } });
-}
-
-// 6. 主函数
+// 3. 主函数
 exports.handler = async (req, res) => {
-  console.log('收到请求:', req.method, req.query);
+  console.log('收到请求:', req.method, req.url, req.query);
   
-  // ========== 手动触发模式 ==========
-  // 访问 /api/create?name=项目名 即可创建收集表
+  // 健康检查
+  if (req.url === '/' || req.url === '/api') {
+    return res.json({ 
+      status: 'ok', 
+      message: '企业微信收集表机器人已部署',
+      version: '1.0.0'
+    });
+  }
+  
+  // 创建收集表
   if (req.method === 'GET' && req.query.name) {
     try {
       const chatName = req.query.name || '手动创建';
@@ -96,82 +70,26 @@ exports.handler = async (req, res) => {
       const formId = await createCollectForm(chatName, token);
       const formUrl = `https://work.weixin.qq.com/wework_admin/collect/form?id=${formId}`;
       
-      const result = {
+      return res.json({
         success: true,
         title: `【${chatName}】项目执行调查表`,
         url: formUrl
-      };
-      
-      // 如果有user参数，则发送到企业微信
-      if (req.query.user) {
-        const reply = `✅ 收集表已创建！\n\n标题：${result.title}\n\n填写链接：${formUrl}`;
-        await sendReply(req.query.user, reply, token);
-        result.message = '已发送到企业微信';
-      }
-      
-      res.json(result);
+      });
     } catch (error) {
       console.error('创建失败:', error);
-      res.status(500).json({ success: false, error: error.message });
+      return res.status(500).json({ success: false, error: error.message });
     }
-    return;
   }
   
-  // ========== 企业微信回调模式 ==========
-  
-  // 企业微信GET请求 - 验证URL
+  // 企业微信回调验证
   if (req.method === 'GET') {
-    const { msg_signature, timestamp, nonce, echostr } = req.query;
-    try {
-      const decrypted = decryptMsg(msg_signature, timestamp, nonce, echostr);
-      res.send(decrypted);
-    } catch (e) {
-      console.error('验证失败:', e);
-      res.status(403).send('验证失败');
+    const { echostr } = req.query;
+    if (echostr) {
+      return res.send(echostr);
     }
-    return;
+    return res.json({ status: 'ok' });
   }
   
-  // POST请求 - 处理消息
-  try {
-    const { msg_signature, timestamp, nonce } = req.query;
-    const body = req.body || {};
-    const encryptedMsg = body.encrypt || '';
-    
-    const msg = decryptMsg(msg_signature, timestamp, nonce, encryptedMsg);
-    console.log('解密后的消息:', JSON.stringify(msg));
-    
-    if (msg.msgtype === 'text') {
-      const userId = msg.from_user_name;
-      const content = msg.content.trim();
-      const chatId = msg.chat_info?.chatid || '';
-      
-      const token = await getAccessToken();
-      
-      if (content === '创建收集表' || content === '/create') {
-        let chatName = '项目';
-        if (chatId) {
-          try {
-            const chatInfo = await axios.get(`https://qyapi.weixin.qq.com/cgi-bin/appchat/get?access_token=${token}&chatid=${chatId}`);
-            chatName = chatInfo.data.chat_info?.name || '项目';
-          } catch (e) { console.error('获取群名失败', e); }
-        }
-        
-        const formId = await createCollectForm(chatName, token);
-        const formUrl = `https://work.weixin.qq.com/wework_admin/collect/form?id=${formId}`;
-        const reply = `✅ 收集表已创建！\n\n标题：【${chatName}】项目执行调查表\n\n填写链接：${formUrl}`;
-        
-        await sendReply(userId, reply, token);
-        if (chatId) await sendToChat(chatId, reply, token);
-        
-      } else if (content === '帮助' || content === '/help') {
-        await sendReply(userId, "📋 发送「创建收集表」创建调查表\n发送「帮助」显示此信息", token);
-      }
-    }
-    
-    res.send('success');
-  } catch (error) {
-    console.error('处理消息失败:', error);
-    res.status(500).send('error');
-  }
+  // 其他请求
+  return res.json({ status: 'ok', message: '请求已接收' });
 };
