@@ -49,8 +49,8 @@ async function createCollectForm(chatName, token) {
   throw new Error(`创建失败: ${JSON.stringify(response.data)}`);
 }
 
-// 3. 主函数
-exports.handler = async (req, res) => {
+// 3. 主函数 - Vercel 格式
+module.exports = async (req, res) => {
   console.log('收到请求:', req.method, req.url, req.query);
   
   // 健康检查
